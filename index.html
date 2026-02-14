@@ -6169,7 +6169,7 @@ function mostrarConsolidadoDemandas() {
         return;
     }
     
-    // Obtener semana del primer registro (todos deberían ser de la misma semana)
+    // Obtener semana del primer registro
     const semanaTexto = consolidadoDemandas[0].semanaInicio && consolidadoDemandas[0].semanaFin 
         ? `DEL ${formatearFecha(consolidadoDemandas[0].semanaInicio)} AL ${formatearFecha(consolidadoDemandas[0].semanaFin)}`
         : 'SEMANA NO ESPECIFICADA';
@@ -6204,26 +6204,30 @@ function mostrarConsolidadoDemandas() {
             <div style="margin-top:10px; font-size:13px; color: #666;">
                 <strong>Total de tomas guardadas:</strong> ${consolidadoDemandas.length}
             </div>
+            
+            <div style="margin-top:5px; font-size:11px; color: #666; font-style: italic;">
+                ℹ️ Los volúmenes y caudales mostrados son promedios según los días programados
+            </div>
         </div>
 
         <div style="text-align:right; margin-bottom:15px;">
-    <button onclick="exportarConsolidadoAExcel()" 
-        style="background:#217346; color:white; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:bold; margin-right:8px; font-size:12px;">
-        📊 Excel
-    </button>
-    <button onclick="imprimirConsolidado()" 
-        style="background:#dc3545; color:white; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:bold; margin-right:8px; font-size:12px;">
-        🖨️ Imprimir
-    </button>
-    <button onclick="mostrarAnexoG2()" 
-        style="background:#0070c0; color:white; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:bold; margin-right:8px; font-size:12px;">
-        📋 Anexo G2
-    </button>
-    <button onclick="volverAReporteActual()" 
-        style="background:#6c757d; color:white; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:bold; font-size:12px;">
-        ⬅️ Volver
-    </button>
-</div>
+            <button onclick="exportarConsolidadoAExcel()" 
+                style="background:#217346; color:white; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:bold; margin-right:8px; font-size:12px;">
+                📊 Excel
+            </button>
+            <button onclick="imprimirConsolidado()" 
+                style="background:#dc3545; color:white; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:bold; margin-right:8px; font-size:12px;">
+                🖨️ Imprimir
+            </button>
+            <button onclick="mostrarAnexoG2()" 
+                style="background:#0070c0; color:white; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:bold; margin-right:8px; font-size:12px;">
+                📋 Anexo G2
+            </button>
+            <button onclick="volverAReporteActual()" 
+                style="background:#6c757d; color:white; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:bold; font-size:12px;">
+                ⬅️ Volver
+            </button>
+        </div>
     `;
     
     // Tabla consolidada simplificada
@@ -6237,64 +6241,131 @@ function mostrarConsolidadoDemandas() {
                     <th>VOL BRUTO<br><small>(m³)</small></th>
                     <th>VOL CORREGIDO<br><small>(m³)</small></th>
                     <th>Q TEÓRICO<br><small>(m³/s)</small></th>
+                    <th>DÍAS PROG.</th>
                 </tr>
             </thead>
             <tbody>
     `;
     
+    // ✅ FUNCIÓN AUXILIAR PARA CALCULAR PROMEDIOS SEGÚN DÍAS PROGRAMADOS
+    function calcularPromediosSegunDias(toma) {
+        const tieneProgramacion = toma.programacion && toma.programacion.diasProgramados > 0;
+        const diasProgramados = tieneProgramacion ? toma.programacion.diasProgramados : 7;
+        
+        // Factor de ajuste: si se programó menos días, los volúmenes se ajustan proporcionalmente
+        // pero el caudal es el promedio de los días programados
+        const factorDias = tieneProgramacion ? (toma.programacion.diasProgramados / 7) : 1;
+        
+        // Calcular suma de caudales de los días programados
+        let sumaCaudalesProgramados = 0;
+        if (tieneProgramacion && toma.programacion.caudalesPorDia) {
+            const c = toma.programacion.caudalesPorDia;
+            sumaCaudalesProgramados = (c.lunes || 0) + (c.martes || 0) + (c.miercoles || 0) + 
+                                     (c.jueves || 0) + (c.viernes || 0) + (c.sabado || 0) + (c.domingo || 0);
+        } else {
+            // Sin programación: usar el caudal teórico de 7 días
+            sumaCaudalesProgramados = toma.totalQTeorico;
+        }
+        
+        // Caudal promedio = suma de caudales de días programados / días programados
+        const caudalPromedio = diasProgramados > 0 ? (sumaCaudalesProgramados / diasProgramados) : toma.totalQTeorico;
+        
+        // Volumen corregido promedio = caudal promedio * días programados * 86400
+        const volumenCorregidoPromedio = caudalPromedio * diasProgramados * 86400;
+        
+        // Volumen bruto promedio (mantiene proporción con volumen corregido original)
+        const proporcionVolBruto = toma.totalVolCorregido > 0 ? (toma.totalVolBruto / toma.totalVolCorregido) : 1;
+        const volumenBrutoPromedio = volumenCorregidoPromedio * proporcionVolBruto;
+        
+        return {
+            diasProgramados: diasProgramados,
+            caudalPromedio: caudalPromedio,
+            volumenCorregidoPromedio: volumenCorregidoPromedio,
+            volumenBrutoPromedio: volumenBrutoPromedio,
+            tieneProgramacion: tieneProgramacion
+        };
+    }
+    
+    // Variables para totales generales (usando promedios)
+    let totalGeneralArea = 0;
+    let totalGeneralVolBrutoPromedio = 0;
+    let totalGeneralVolPromedio = 0;
+    let totalGeneralCaudalPromedio = 0;
+    
     consolidadoDemandas.forEach((toma, indexToma) => {
+        const promedios = calcularPromediosSegunDias(toma);
         const numCultivos = toma.cultivos.length;
         
+        // Calcular promedios por cultivo
         toma.cultivos.forEach((cultivo, indexCultivo) => {
             const esPrimeraFila = indexCultivo === 0;
+            
+            // Calcular promedios para este cultivo
+            const proporcionCultivo = toma.totalQTeorico > 0 ? (cultivo.qTeorico / toma.totalQTeorico) : 0;
+            const caudalCultivoPromedio = promedios.caudalPromedio * proporcionCultivo;
+            
+            const proporcionVolCultivo = toma.totalVolCorregido > 0 ? (cultivo.volCorregido / toma.totalVolCorregido) : 0;
+            const volCorregidoCultivoPromedio = promedios.volumenCorregidoPromedio * proporcionVolCultivo;
+            
+            const proporcionVolBrutoCultivo = toma.totalVolCorregido > 0 ? (cultivo.volCorregido / toma.totalVolCorregido) : 0;
+            const volBrutoCultivoPromedio = promedios.volumenBrutoPromedio * proporcionVolBrutoCultivo;
             
             html += `
                 <tr style="${indexToma % 2 === 0 ? 'background: #f8f9fa;' : 'background: white;'}">
                     ${esPrimeraFila ? `<td rowspan="${numCultivos}" style="font-weight:bold; background: #e3f2fd; vertical-align: middle;">${toma.toma}</td>` : ''}
                     <td style="font-weight:600;">${cultivo.cultivo}</td>
                     <td style="text-align:center; font-weight:bold; color: ${cultivo.areaSemana > 0 ? '#0070c0' : '#666'};">${cultivo.areaSemana.toFixed(2)}</td>
-                    <td style="text-align:center;">${cultivo.volBruto.toFixed(2)}</td>
-                    <td style="text-align:center; font-weight:bold;">${cultivo.volCorregido.toFixed(2)}</td>
-                    <td style="text-align:center; font-weight:bold; color: ${cultivo.qTeorico > 0 ? '#28a745' : '#666'};">${cultivo.qTeorico.toFixed(3)}</td>
+                    <td style="text-align:center;">${volBrutoCultivoPromedio.toFixed(2)}</td>
+                    <td style="text-align:center; font-weight:bold;">${volCorregidoCultivoPromedio.toFixed(2)}</td>
+                    <td style="text-align:center; font-weight:bold; color: ${caudalCultivoPromedio > 0 ? '#28a745' : '#666'};">${caudalCultivoPromedio.toFixed(3)}</td>
+                    ${esPrimeraFila ? `<td rowspan="${numCultivos}" style="text-align:center; font-weight:bold; background: ${promedios.tieneProgramacion ? '#d4edda' : '#fff3cd'}; vertical-align: middle;">${promedios.diasProgramados}</td>` : ''}
                 </tr>
             `;
         });
         
-        // Fila de totales por toma
+        // Fila de totales por toma (usando promedios)
         html += `
             <tr style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; font-weight: bold;">
                 <td colspan="2" style="text-align:right; padding-right:15px;">TOTAL ${toma.toma}:</td>
                 <td style="text-align:center;">${toma.totalArea.toFixed(2)}</td>
-                <td style="text-align:center;">${toma.totalVolBruto.toFixed(2)}</td>
-                <td style="text-align:center;">${toma.totalVolCorregido.toFixed(2)}</td>
-                <td style="text-align:center;">${toma.totalQTeorico.toFixed(3)}</td>
+                <td style="text-align:center;">${promedios.volumenBrutoPromedio.toFixed(2)}</td>
+                <td style="text-align:center;">${promedios.volumenCorregidoPromedio.toFixed(2)}</td>
+                <td style="text-align:center;">${promedios.caudalPromedio.toFixed(3)}</td>
+                <td style="text-align:center;">${promedios.diasProgramados}</td>
             </tr>
         `;
+        
+        // Acumular totales generales
+        totalGeneralArea += toma.totalArea;
+        totalGeneralVolBrutoPromedio += promedios.volumenBrutoPromedio;
+        totalGeneralVolPromedio += promedios.volumenCorregidoPromedio;
+        // Para el caudal total, usamos el promedio ponderado por área o simplemente sumamos
+        totalGeneralCaudalPromedio += promedios.caudalPromedio;
     });
     
-    // Fila de totales general
-    const totalGeneralArea = consolidadoDemandas.reduce((sum, t) => sum + t.totalArea, 0);
-    const totalGeneralVolBruto = consolidadoDemandas.reduce((sum, t) => sum + t.totalVolBruto, 0);
-    const totalGeneralVol = consolidadoDemandas.reduce((sum, t) => sum + t.totalVolCorregido, 0);
-    const totalGeneralQ = consolidadoDemandas.reduce((sum, t) => sum + t.totalQTeorico, 0);
-    
+    // Fila de totales general (usando promedios)
     html += `
             <tr style="background: #155724; color: white; font-weight: bold; font-size: 14px;">
                 <td colspan="2" style="text-align:right; padding-right:15px;">TOTAL GENERAL:</td>
                 <td style="text-align:center;">${totalGeneralArea.toFixed(2)}</td>
-                <td style="text-align:center;">${totalGeneralVolBruto.toFixed(2)}</td>
-                <td style="text-align:center;">${totalGeneralVol.toFixed(2)}</td>
-                <td style="text-align:center;">${totalGeneralQ.toFixed(3)}</td>
+                <td style="text-align:center;">${totalGeneralVolBrutoPromedio.toFixed(2)}</td>
+                <td style="text-align:center;">${totalGeneralVolPromedio.toFixed(2)}</td>
+                <td style="text-align:center;">${totalGeneralCaudalPromedio.toFixed(3)}</td>
+                <td style="text-align:center;">-</td>
             </tr>
         </tbody>
         </table>
         
         <div style="margin-top: 20px; padding: 15px; background: #fff3cd; border-radius: 8px; border-left: 4px solid #ffc107;">
-            <strong>📊 Resumen Consolidado:</strong><br>
+            <strong>📊 Resumen Consolidado (Promedios según días programados):</strong><br>
             Tomas guardadas: ${consolidadoDemandas.length} | 
             Área total: ${totalGeneralArea.toFixed(2)} ha | 
-            Volumen bruto total: ${totalGeneralVolBruto.toFixed(2)} m³ | 
-            Volumen corregido total: ${totalGeneralVol.toFixed(2)} m³
+            Volumen bruto total promedio: ${totalGeneralVolBrutoPromedio.toFixed(2)} m³ | 
+            Volumen corregido total promedio: ${totalGeneralVolPromedio.toFixed(2)} m³<br>
+            <small style="color: #666;">
+                ℹ️ Los valores mostrados son promedios calculados según los días programados en cada toma.
+                El Anexo G2 mantiene los caudales diarios específicos de la programación.
+            </small>
         </div>
     `;
     
